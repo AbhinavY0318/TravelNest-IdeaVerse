@@ -1,8 +1,11 @@
-import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { Compass, MoonStar } from "lucide-react";
+import { PlannerProvider } from "./context/PlannerContext.jsx";
 import LandingPage from "./pages/LandingPage.jsx";
 import ModeSelectionPage from "./pages/ModeSelectionPage.jsx";
-import PlaceholderPage from "./pages/PlaceholderPage.jsx";
+import BusinessSetupPage from "./pages/BusinessSetupPage.jsx";
+import LeisureSetupPage from "./pages/LeisureSetupPage.jsx";
+import ItineraryDashboardPage from "./pages/ItineraryDashboardPage.jsx";
 
 const navItems = [
   { label: "Home", to: "/" },
@@ -13,6 +16,8 @@ const navItems = [
 ];
 
 function AppShell() {
+  const location = useLocation();
+
   return (
     <div className="relative min-h-screen overflow-hidden px-4 py-4 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-7xl flex-col rounded-[2rem] border border-white/10 bg-slate-950/[0.65] shadow-[0_30px_80px_rgba(15,23,42,0.45)] backdrop-blur-xl">
@@ -50,41 +55,17 @@ function AppShell() {
 
           <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 lg:flex">
             <MoonStar className="h-4 w-4 text-fuchsia-300" />
-            Dark Knight Devs aesthetic
+            Free APIs + dark glass UI
           </div>
         </header>
 
-        <main className="flex-1">
+        <main key={location.pathname} className="flex-1">
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/mode" element={<ModeSelectionPage />} />
-            <Route
-              path="/business-setup"
-              element={
-                <PlaceholderPage
-                  title="Business Traveler Setup"
-                  description="Next, we can add PDF schedule upload, meeting extraction, and a free-time dashboard for business travelers."
-                />
-              }
-            />
-            <Route
-              path="/leisure-setup"
-              element={
-                <PlaceholderPage
-                  title="Leisure Traveler Setup"
-                  description="Next, we can connect browser geolocation, interest tagging, and nearby discovery preferences for leisure travelers."
-                />
-              }
-            />
-            <Route
-              path="/itinerary"
-              element={
-                <PlaceholderPage
-                  title="Interactive Itinerary Dashboard"
-                  description="Next, we can build the AI timeline, map overlays, route feasibility chips, and itinerary regeneration actions."
-                />
-              }
-            />
+            <Route path="/business-setup" element={<BusinessSetupPage />} />
+            <Route path="/leisure-setup" element={<LeisureSetupPage />} />
+            <Route path="/itinerary" element={<ItineraryDashboardPage />} />
           </Routes>
         </main>
       </div>
@@ -94,8 +75,10 @@ function AppShell() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AppShell />
-    </BrowserRouter>
+    <PlannerProvider>
+      <BrowserRouter>
+        <AppShell />
+      </BrowserRouter>
+    </PlannerProvider>
   );
 }
