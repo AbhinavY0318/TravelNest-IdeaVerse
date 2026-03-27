@@ -26,7 +26,10 @@ exports.extractSchedule = async (req, res) => {
 
     if (uploadedFile) {
       const parsed = await pdfParse(uploadedFile.buffer);
-      scheduleText = parsed.text?.trim() || "";
+      const pdfText = parsed.text?.trim() || "";
+
+      // Prefer the PDF when it has usable text, but keep pasted text as a reliable fallback.
+      scheduleText = pdfText || rawScheduleText || "";
     }
 
     if (!scheduleText) {
@@ -56,14 +59,22 @@ exports.extractSchedule = async (req, res) => {
       dayEnd: process.env.DEFAULT_DAY_END || "21:00",
     });
 
-    const locationQuery =
-      aiSchedule.primaryLocationQuery ||
-      aiSchedule.city ||
-      meetings.find((meeting) => meeting.locationName)?.locationName ||
-      fallbackCity ||
-      "";
+    const locationCandidates = [
+      aiSchedule.primaryLocationQuery,
+      aiSchedule.city,
+      meetings.find((meeting) => meeting.locationName)?.locationName,
+      fallbackCity,
+    ].filter(Boolean);
 
-    const location = await geocodeQuery(locationQuery);
+    let location = null;
+
+    for (const query of locationCandidates) {
+      location = await geocodeQuery(query);
+
+      if (location) {
+        break;
+      }
+    }
 
     res.json({
       travelerMode: "business",
