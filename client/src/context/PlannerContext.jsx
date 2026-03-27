@@ -19,6 +19,7 @@ const defaultPlannerState = {
   tripId: "",
   tripHistory: [],
   storageStatus: "",
+  journalEntries: [],
   documentName: "",
   availableMinutes: 180,
   transportMode: "auto",

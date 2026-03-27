@@ -9,9 +9,9 @@ import {
   ChevronRight,
   CloudRain,
   Copy,
-  Database,
   Download,
   Globe2,
+  NotebookPen,
   Layers3,
   LoaderCircle,
   MapPinned,
@@ -19,15 +19,22 @@ import {
   PanelTopOpen,
   Radar,
   RefreshCw,
+  Save,
   Share2,
   Sparkles,
+  Star,
   SunMedium,
+  Trees,
+  Trash2,
+  UtensilsCrossed,
+  SquarePen,
+  X,
 } from "lucide-react";
 import { usePlanner } from "../context/PlannerContext.jsx";
 import ItineraryMap from "../components/ItineraryMap.jsx";
 import RefinementChips from "../components/RefinementChips.jsx";
 import ItineraryTimeline from "../components/ItineraryTimeline.jsx";
-import { fetchTripById, fetchTripHistory, optimizeItinerary } from "../lib/api.js";
+import { fetchTripById, fetchTripHistory, optimizeItinerary, updateTripJournal } from "../lib/api.js";
 import {
   formatCoordinates,
   formatCurrency,
@@ -131,12 +138,117 @@ function buildExportText({ itinerary, location, storageStatus }) {
   ].join("\n");
 }
 
+function getAreaName(label) {
+  const value = String(label || "").trim();
+
+  if (!value) {
+    return "this area";
+  }
+
+  return value.split(",")[0]?.trim() || value;
+}
+
+function dedupeMustTryCandidates(candidates) {
+  const seen = new Set();
+
+  return candidates.filter((candidate) => {
+    const key = candidate.id || `${candidate.name}-${candidate.lat}-${candidate.lng}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildMustTryGroups({ shortlist = [], rawPois = [] }) {
+  const rankedCandidates = dedupeMustTryCandidates([
+    ...shortlist,
+    ...rawPois.map((poi) => ({ ...poi, score: poi.score || poi.cultureWeight || 0 })),
+  ]).sort((left, right) => Number(right.score || 0) - Number(left.score || 0));
+
+  const priorityGroups = [
+    {
+      id: "famous",
+      title: "Famous Pick",
+      subtitle: "Signature stop",
+      icon: Star,
+      accent: "text-amber-200 border-amber-300/20 bg-amber-400/10",
+      matcher: (category) => /museum|historic|landmark|gallery|viewpoint/.test(category),
+      fallback: "Top-rated cultural or iconic stop in the area.",
+    },
+    {
+      id: "food",
+      title: "Food Must-Try",
+      subtitle: "Taste the area",
+      icon: UtensilsCrossed,
+      accent: "text-rose-200 border-rose-300/20 bg-rose-400/10",
+      matcher: (category) => /restaurant|cafe|market/.test(category),
+      fallback: "Good for a local bite, cafe reset, or signature food break.",
+    },
+    {
+      id: "scenic",
+      title: "Scenic Stop",
+      subtitle: "Views and atmosphere",
+      icon: Trees,
+      accent: "text-emerald-200 border-emerald-300/20 bg-emerald-400/10",
+      matcher: (category) => /park|viewpoint|garden/.test(category),
+      fallback: "Strong option for a slower moment, walk, or view.",
+    },
+  ];
+
+  const used = new Set();
+  const matchedPriorityGroups = priorityGroups
+    .map((group) => {
+      const match = rankedCandidates.find((candidate) => {
+        const key = candidate.id || candidate.name;
+        return !used.has(key) && group.matcher(candidate.category || "");
+      });
+
+      if (!match) {
+        return null;
+      }
+
+      used.add(match.id || match.name);
+
+      return {
+        ...group,
+        place: match,
+      };
+    })
+    .filter(Boolean);
+
+  if (!matchedPriorityGroups.length) {
+    return [];
+  }
+
+  const localFallback = rankedCandidates.find((candidate) => {
+    const key = candidate.id || candidate.name;
+    return !used.has(key);
+  });
+
+  if (localFallback) {
+    matchedPriorityGroups.push({
+      id: "local",
+      title: "Local Special",
+      subtitle: "Area gem",
+      icon: Sparkles,
+      accent: "text-cyan-200 border-cyan-300/20 bg-cyan-400/10",
+      fallback: "A worthwhile nearby stop that stands out in this planning pass.",
+      place: localFallback,
+    });
+  }
+
+  return matchedPriorityGroups;
+}
+
 export default function ItineraryDashboardPage() {
   const { getToken } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const { plannerState, mergePlannerState, resetPlannerState } = usePlanner();
   const itinerary = plannerState.itinerary;
-  const ai = plannerState.ai;
   const [refinementOptions, setRefinementOptions] = useState(
     plannerState.refinementOptions || itinerary?.refinementOptions || []
   );
@@ -144,6 +256,10 @@ export default function ItineraryDashboardPage() {
   const [historyError, setHistoryError] = useState("");
   const [loadingTripId, setLoadingTripId] = useState("");
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [journalInput, setJournalInput] = useState("");
+  const [isSavingJournal, setIsSavingJournal] = useState(false);
+  const [editingJournalId, setEditingJournalId] = useState("");
+  const [editingJournalContent, setEditingJournalContent] = useState("");
   const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
@@ -209,6 +325,7 @@ export default function ItineraryDashboardPage() {
         rawPois: trip.rawPois || [],
         itinerary: trip.itinerary || null,
         weatherContext: trip.itinerary?.weatherContext || null,
+        journalEntries: trip.journalEntries || [],
         transportMode: trip.transportMode || trip.itinerary?.transportMode || "auto",
         expenseMode: trip.expenseMode || trip.itinerary?.expenseMode || "balanced",
         tripId: trip.id,
@@ -326,6 +443,98 @@ export default function ItineraryDashboardPage() {
     }
   }
 
+  async function handleSaveJournalEntry() {
+    const nextEntryContent = journalInput.trim();
+
+    if (!nextEntryContent) {
+      return;
+    }
+
+    const nextEntries = [
+      {
+        id: `journal-${Date.now()}`,
+        content: nextEntryContent,
+        createdAt: new Date().toISOString(),
+      },
+      ...(plannerState.journalEntries || []),
+    ];
+
+    setJournalInput("");
+    await persistJournalEntries(
+      nextEntries,
+      plannerState.tripId ? "Journal entry saved to this trip." : "Journal entry saved locally."
+    );
+  }
+
+  async function persistJournalEntries(nextEntries, successMessage) {
+    mergePlannerState({
+      journalEntries: nextEntries,
+    });
+
+    if (!plannerState.tripId) {
+      setActionMessage(`${successMessage} Saved locally for this unsaved itinerary.`);
+      return;
+    }
+
+    try {
+      setIsSavingJournal(true);
+      const response = await updateTripJournal(plannerState.tripId, nextEntries, getToken);
+      mergePlannerState({
+        journalEntries: response.journalEntries || nextEntries,
+      });
+      setActionMessage(successMessage);
+      await loadHistory();
+    } catch (requestError) {
+      setHistoryError(
+        requestError.response?.data?.error ||
+          requestError.message ||
+          "Unable to update the trip journal right now."
+      );
+    } finally {
+      setIsSavingJournal(false);
+    }
+  }
+
+  function startEditingJournalEntry(entry) {
+    setEditingJournalId(entry.id || "");
+    setEditingJournalContent(entry.content || "");
+  }
+
+  function cancelEditingJournalEntry() {
+    setEditingJournalId("");
+    setEditingJournalContent("");
+  }
+
+  async function handleUpdateJournalEntry(entryId) {
+    const nextContent = editingJournalContent.trim();
+
+    if (!nextContent) {
+      return;
+    }
+
+    const nextEntries = (plannerState.journalEntries || []).map((entry) =>
+      entry.id === entryId
+        ? {
+            ...entry,
+            content: nextContent,
+          }
+        : entry
+    );
+
+    await persistJournalEntries(nextEntries, "Journal entry updated.");
+    cancelEditingJournalEntry();
+  }
+
+  async function handleDeleteJournalEntry(entryId) {
+    const nextEntries = (plannerState.journalEntries || []).filter((entry) => entry.id !== entryId);
+
+    await persistJournalEntries(nextEntries, "Journal entry deleted.");
+
+    if (editingJournalId === entryId) {
+      cancelEditingJournalEntry();
+    }
+  }
+
   function handleDownloadSummary() {
     if (!itinerary) {
       return;
@@ -354,6 +563,14 @@ export default function ItineraryDashboardPage() {
   const refinementSummary = useMemo(
     () => (refinementOptions || []).map(formatRefinementLabel),
     [refinementOptions]
+  );
+  const mustTryGroups = useMemo(
+    () =>
+      buildMustTryGroups({
+        shortlist: itinerary?.shortlistedPois || [],
+        rawPois: plannerState.rawPois || [],
+      }),
+    [itinerary, plannerState.rawPois]
   );
 
   if (!itinerary) {
@@ -504,13 +721,6 @@ export default function ItineraryDashboardPage() {
 
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 <MetricStrip
-                  icon={Database}
-                  label="Storage"
-                  value={ai?.used ? "Stored + refined" : plannerState.tripId ? "Stored in MongoDB" : "Local only"}
-                  meta={plannerState.tripId ? `Trip ${plannerState.tripId}` : "Persistence unavailable for this pass"}
-                  tone="border-emerald-300/20 bg-emerald-400/10 text-emerald-100"
-                />
-                <MetricStrip
                   icon={itinerary.weatherContext?.isRainy ? CloudRain : SunMedium}
                   label="Weather"
                   value={
@@ -656,6 +866,75 @@ export default function ItineraryDashboardPage() {
               </div>
             </div>
 
+            {mustTryGroups.length ? (
+              <div className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.82),rgba(15,23,42,0.54))] p-6 shadow-[0_24px_80px_rgba(2,6,23,0.26)] backdrop-blur-md">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Must Try</p>
+                    <h2 className="mt-2 text-2xl font-semibold text-white">
+                      Popular and area-special picks for {getAreaName(plannerState.location?.label)}
+                    </h2>
+                  </div>
+                  <div className="rounded-full border border-amber-300/20 bg-amber-400/10 px-3 py-1 text-sm text-amber-100">
+                    Local highlights
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-4 lg:grid-cols-2">
+                  {mustTryGroups.map((group) => {
+                    const GroupIcon = group.icon;
+
+                    return (
+                      <div
+                        key={group.id}
+                        className="rounded-[1.6rem] border border-white/10 bg-black/[0.18] p-5"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
+                              {group.subtitle}
+                            </p>
+                            <h3 className="mt-2 text-xl font-semibold text-white">{group.title}</h3>
+                          </div>
+                          <div className={["rounded-2xl border p-3", group.accent].join(" ")}>
+                            <GroupIcon className="h-5 w-5" />
+                          </div>
+                        </div>
+
+                        <div className="mt-5 space-y-3">
+                          <div>
+                            <p className="text-lg font-semibold text-white">{group.place.name}</p>
+                            <p className="mt-1 text-sm leading-7 text-slate-300">
+                              {group.place.reason ||
+                                group.place.highlight ||
+                                group.place.tagSummary ||
+                                group.fallback}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-slate-300">
+                            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+                              {group.place.categoryLabel || "Local stop"}
+                            </span>
+                            {group.place.travelMinutes ? (
+                              <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+                                {group.place.travelMinutes} min away
+                              </span>
+                            ) : null}
+                            {group.place.interestMatches?.[0] ? (
+                              <span className="rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1 text-cyan-100">
+                                {group.place.interestMatches[0]}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
             <div className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.82),rgba(15,23,42,0.54))] p-6 shadow-[0_24px_80px_rgba(2,6,23,0.26)] backdrop-blur-md">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -673,6 +952,127 @@ export default function ItineraryDashboardPage() {
           </div>
 
           <div className="space-y-6">
+            <MotionDiv
+              whileHover={{ y: -6 }}
+              transition={{ duration: 0.25 }}
+              className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.86),rgba(15,23,42,0.56))] p-6 shadow-[0_24px_80px_rgba(2,6,23,0.28)] backdrop-blur-md"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Trip Journal</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-white">Capture notes and moments</h2>
+                </div>
+                <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-3 text-amber-100">
+                  <NotebookPen className="h-5 w-5" />
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                <textarea
+                  rows="4"
+                  value={journalInput}
+                  onChange={(event) => setJournalInput(event.target.value)}
+                  placeholder="Write what stood out, what changed, or what you want to remember about this trip..."
+                  className="w-full rounded-[1.5rem] border border-white/10 bg-black/[0.18] px-4 py-3 text-slate-100 outline-none transition focus:border-cyan-300/40"
+                />
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-slate-300">
+                    {plannerState.tripId
+                      ? "Entries are attached to this saved trip."
+                      : "This itinerary is not saved yet, so journal entries stay local for now."}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={isSavingJournal || !journalInput.trim()}
+                    onClick={handleSaveJournalEntry}
+                    className="inline-flex items-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {isSavingJournal ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <NotebookPen className="h-4 w-4" />
+                    )}
+                    Save Entry
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {(plannerState.journalEntries || []).length ? (
+                    plannerState.journalEntries.map((entry) => (
+                      <div
+                        key={entry.id || entry.createdAt}
+                        className="rounded-[1.4rem] border border-white/10 bg-black/[0.18] p-4"
+                      >
+                        {editingJournalId === entry.id ? (
+                          <>
+                            <textarea
+                              rows="4"
+                              value={editingJournalContent}
+                              onChange={(event) => setEditingJournalContent(event.target.value)}
+                              className="w-full rounded-[1.1rem] border border-white/10 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none transition focus:border-cyan-300/40"
+                            />
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={isSavingJournal || !editingJournalContent.trim()}
+                                onClick={() => handleUpdateJournalEntry(entry.id)}
+                                className="inline-flex items-center gap-2 rounded-full bg-cyan-400 px-3 py-2 text-sm font-medium text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-70"
+                              >
+                                <Save className="h-4 w-4" />
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isSavingJournal}
+                                onClick={cancelEditingJournalEntry}
+                                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-70"
+                              >
+                                <X className="h-4 w-4" />
+                                Cancel
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm leading-7 text-slate-200">{entry.content}</p>
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                              <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
+                                {formatSavedDate(entry.createdAt)}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isSavingJournal}
+                                  onClick={() => startEditingJournalEntry(entry)}
+                                  className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-2 text-xs text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-70"
+                                >
+                                  <SquarePen className="h-3.5 w-3.5" />
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isSavingJournal}
+                                  onClick={() => handleDeleteJournalEntry(entry.id)}
+                                  className="inline-flex items-center gap-2 rounded-full border border-rose-300/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-100 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm leading-7 text-slate-300">
+                      No journal entries yet. Add quick reflections, trip decisions, or memorable moments here.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </MotionDiv>
+
             <MotionDiv
               whileHover={{ y: -6 }}
               transition={{ duration: 0.25 }}

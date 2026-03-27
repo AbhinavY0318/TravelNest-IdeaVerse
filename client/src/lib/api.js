@@ -86,4 +86,16 @@ export async function fetchTripById(tripId, getToken) {
   return response.data;
 }
 
+export async function updateTripJournal(tripId, journalEntries, getToken) {
+  const response = await api.patch(
+    `/api/optimize-itinerary/history/${tripId}/journal`,
+    { journalEntries },
+    {
+      headers: await buildAuthHeaders(getToken),
+    }
+  );
+
+  return response.data;
+}
+
 export default api;

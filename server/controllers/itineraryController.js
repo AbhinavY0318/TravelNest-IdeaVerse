@@ -69,6 +69,11 @@ function formatTripSummary(trip) {
     preferences: trip.preferences || [],
     notes: trip.notes || "",
     sourceDocumentName: trip.sourceDocumentName || "",
+    journalEntries: (trip.journalEntries || []).map((entry, index) => ({
+      id: String(entry._id || `${trip._id}-journal-${index + 1}`),
+      content: entry.content || "",
+      createdAt: entry.createdAt || trip.updatedAt || trip.createdAt,
+    })),
     stats: trip.itinerary?.stats || null,
     travelerProfile: trip.itinerary?.travelerProfile || trip.travelerProfile || null,
     transportMode: trip.transportMode || trip.itinerary?.transportMode || "auto",
@@ -235,6 +240,7 @@ exports.optimizeItinerary = async (req, res) => {
         itinerary,
         sourceDocumentName: req.body.documentName || null,
         travelerProfile: itinerary.travelerProfile || null,
+        journalEntries: [],
         transportMode,
         expenseMode,
       });
@@ -332,6 +338,11 @@ exports.getTripHistoryItem = async (req, res) => {
         freeSlots: trip.freeSlots || [],
         rawPois: trip.rawPois || [],
         itinerary: trip.itinerary || null,
+        journalEntries: (trip.journalEntries || []).map((entry, index) => ({
+          id: String(entry._id || `${trip._id}-journal-${index + 1}`),
+          content: entry.content || "",
+          createdAt: entry.createdAt || trip.updatedAt || trip.createdAt,
+        })),
         transportMode: trip.transportMode || trip.itinerary?.transportMode || "auto",
         expenseMode: trip.expenseMode || trip.itinerary?.expenseMode || "balanced",
       },
@@ -339,6 +350,56 @@ exports.getTripHistoryItem = async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       error: error.message || "Failed to load trip.",
+    });
+  }
+};
+
+exports.updateTripJournal = async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        error: "MongoDB is not connected.",
+      });
+    }
+
+    const query = req.dbUser?._id
+      ? {
+          _id: req.params.tripId,
+          $or: [{ user: req.dbUser._id }, { "userSnapshot.clerkId": req.auth.userId }],
+        }
+      : { _id: req.params.tripId, "userSnapshot.clerkId": req.auth.userId };
+
+    const trip = await Trip.findOne(query);
+
+    if (!trip) {
+      return res.status(404).json({
+        error: "Trip not found.",
+      });
+    }
+
+    const entries = Array.isArray(req.body.journalEntries)
+      ? req.body.journalEntries
+          .map((entry) => ({
+            content: String(entry.content || "").trim(),
+            createdAt: entry.createdAt ? new Date(entry.createdAt) : new Date(),
+          }))
+          .filter((entry) => entry.content)
+          .slice(-50)
+      : [];
+
+    trip.journalEntries = entries;
+    await trip.save();
+
+    return res.json({
+      journalEntries: trip.journalEntries.map((entry, index) => ({
+        id: String(entry._id || `${trip._id}-journal-${index + 1}`),
+        content: entry.content || "",
+        createdAt: entry.createdAt || trip.updatedAt || trip.createdAt,
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: error.message || "Failed to update trip journal.",
     });
   }
 };
