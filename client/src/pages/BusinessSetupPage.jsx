@@ -21,6 +21,7 @@ export default function BusinessSetupPage() {
   const { getToken } = useAuth();
   const { plannerState, mergePlannerState } = usePlanner();
   const [selectedFile, setSelectedFile] = useState(null);
+  const [scheduleTextInput, setScheduleTextInput] = useState(plannerState.scheduleText || "");
   const [baseLocationQuery, setBaseLocationQuery] = useState(plannerState.location?.label || "");
   const [interestInput, setInterestInput] = useState(plannerState.interests.join(", "));
   const [notes, setNotes] = useState(plannerState.notes || "");
@@ -41,6 +42,14 @@ export default function BusinessSetupPage() {
   async function handleExtractSchedule(event) {
     event.preventDefault();
     setError("");
+
+    const trimmedScheduleText = scheduleTextInput.trim();
+
+    if (!selectedFile && !trimmedScheduleText) {
+      setError("Upload a PDF or paste your schedule text so the planner has something to analyze.");
+      return;
+    }
+
     setIsExtracting(true);
 
     try {
@@ -48,6 +57,10 @@ export default function BusinessSetupPage() {
 
       if (selectedFile) {
         formData.append("schedulePdf", selectedFile);
+      }
+
+      if (trimmedScheduleText) {
+        formData.append("scheduleText", trimmedScheduleText);
       }
 
       formData.append("baseLocationQuery", baseLocationQuery);
@@ -153,7 +166,8 @@ export default function BusinessSetupPage() {
                 <div className="flex-1">
                   <p className="font-semibold text-white">Meeting schedule PDF</p>
                   <p className="mt-1 text-sm text-slate-300">
-                    Upload agendas, conference schedules, or internal meeting plans.
+                    Upload agendas, conference schedules, or internal meeting plans. If the PDF is
+                    scanned or messy, you can use the text area below instead.
                   </p>
                   <input
                     type="file"
@@ -163,6 +177,23 @@ export default function BusinessSetupPage() {
                   />
                 </div>
               </div>
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium text-slate-200">
+                Schedule text
+              </span>
+              <textarea
+                rows="8"
+                value={scheduleTextInput}
+                onChange={(event) => setScheduleTextInput(event.target.value)}
+                placeholder="Paste your meetings here if you do not want to upload a PDF. Example: 09:00 AM - 10:30 AM Product review at Bengaluru office..."
+                className="w-full rounded-[1.5rem] border border-white/10 bg-slate-950/70 px-4 py-3 text-slate-100 outline-none transition focus:border-cyan-300/40"
+              />
+              <p className="mt-2 text-sm text-slate-400">
+                Use either PDF, text, or both. When both are provided, the planner can fall back to
+                the pasted text if the PDF is hard to read.
+              </p>
             </label>
 
             <div className="grid gap-4 md:grid-cols-2">
