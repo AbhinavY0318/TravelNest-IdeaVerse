@@ -58,6 +58,11 @@ export default function ItineraryTimeline({ timeline = [] }) {
                     <p className="mt-3 text-sm leading-6 text-cyan-100">
                       {item.explanation.scheduleFit}
                     </p>
+                    {item.explanation.weatherFit ? (
+                      <p className="mt-3 text-sm leading-6 text-emerald-100">
+                        {item.explanation.weatherFit}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-black/[0.18] p-4">
                     <p className="text-xs uppercase tracking-[0.22em] text-slate-400">

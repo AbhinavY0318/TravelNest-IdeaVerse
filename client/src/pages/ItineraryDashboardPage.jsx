@@ -10,6 +10,8 @@ import {
   MapPinned,
   RefreshCw,
   Sparkles,
+  SunMedium,
+  CloudRain,
 } from "lucide-react";
 import { usePlanner } from "../context/PlannerContext.jsx";
 import ItineraryMap from "../components/ItineraryMap.jsx";
@@ -235,6 +237,49 @@ export default function ItineraryDashboardPage() {
                 </p>
               </div>
             </div>
+
+            {itinerary.refinementOptions?.length || itinerary.weatherContext ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.05] p-5 shadow-[0_18px_45px_rgba(2,6,23,0.24)]">
+                  <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Refinement Chips</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {(itinerary.refinementOptions || []).length ? (
+                      itinerary.refinementOptions.map((option) => (
+                        <span
+                          key={option}
+                          className="rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1 text-sm text-cyan-100"
+                        >
+                          {option.replaceAll("_", " ")}
+                        </span>
+                      ))
+                    ) : (
+                      <p className="text-sm text-slate-300">No refinement chips were active in this pass.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.05] p-5 shadow-[0_18px_45px_rgba(2,6,23,0.24)]">
+                  <div className="flex items-center gap-3">
+                    {itinerary.weatherContext?.isRainy ? (
+                      <CloudRain className="h-5 w-5 text-sky-300" />
+                    ) : (
+                      <SunMedium className="h-5 w-5 text-amber-300" />
+                    )}
+                    <div>
+                      <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Weather Context</p>
+                      <p className="mt-1 text-lg font-semibold text-white">
+                        {itinerary.weatherContext?.temperatureC != null
+                          ? `${itinerary.weatherContext.temperatureC}°C`
+                          : "Unavailable"}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm leading-7 text-slate-300">
+                    {itinerary.weatherContext?.summary || "Weather data was unavailable for this itinerary."}
+                  </p>
+                </div>
+              </div>
+            ) : null}
 
             <div className="rounded-[2rem] border border-white/10 bg-white/[0.05] p-6 shadow-[0_18px_45px_rgba(2,6,23,0.24)]">
               <div className="flex items-center justify-between">
