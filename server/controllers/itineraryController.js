@@ -5,7 +5,9 @@ const { calculateTravelMatrix } = require("../services/routingService");
 const {
   buildDeterministicItinerary,
   deriveFreeSlots,
+  normalizeExpenseMode,
   normalizeRefinementOptions,
+  normalizeTransportMode,
   optimizeCandidatePlaces,
 } = require("../services/itineraryService");
 const { generateStructuredItinerary, hasGeminiConfig } = require("../services/geminiService");
@@ -67,8 +69,15 @@ function formatTripSummary(trip) {
     preferences: trip.preferences || [],
     notes: trip.notes || "",
     sourceDocumentName: trip.sourceDocumentName || "",
+    journalEntries: (trip.journalEntries || []).map((entry, index) => ({
+      id: String(entry._id || `${trip._id}-journal-${index + 1}`),
+      content: entry.content || "",
+      createdAt: entry.createdAt || trip.updatedAt || trip.createdAt,
+    })),
     stats: trip.itinerary?.stats || null,
     travelerProfile: trip.itinerary?.travelerProfile || trip.travelerProfile || null,
+    transportMode: trip.transportMode || trip.itinerary?.transportMode || "auto",
+    expenseMode: trip.expenseMode || trip.itinerary?.expenseMode || "balanced",
     itineraryHeadline: trip.itinerary?.headline || "",
     itineraryOverview: trip.itinerary?.overview || "",
     analytics,
@@ -88,6 +97,8 @@ exports.optimizeItinerary = async (req, res) => {
     const notes = req.body.notes?.trim() || "";
     const preferences = parseInterestInput(req.body.interests);
     const refinementOptions = normalizeRefinementOptions(req.body.refinementOptions);
+    const transportMode = normalizeTransportMode(req.body.transportMode);
+    const expenseMode = normalizeExpenseMode(req.body.expenseMode);
     const freeSlots = deriveFreeSlots({
       travelerMode,
       freeSlots: req.body.freeSlots,
@@ -163,6 +174,7 @@ exports.optimizeItinerary = async (req, res) => {
       pois: prerankedPois.slice(0, 24),
       travelerMode,
       availableMinutes: Math.max(...freeSlots.map((slot) => slot.durationMinutes), 0),
+      transportMode,
     });
 
     const shortlistedPois = optimizeCandidatePlaces({
@@ -186,6 +198,8 @@ exports.optimizeItinerary = async (req, res) => {
       rawPoiCount: rawPois.length,
       refinementOptions,
       weatherContext,
+      transportMode,
+      expenseMode,
     });
 
     const aiItinerary = await generateStructuredItinerary({
@@ -226,6 +240,9 @@ exports.optimizeItinerary = async (req, res) => {
         itinerary,
         sourceDocumentName: req.body.documentName || null,
         travelerProfile: itinerary.travelerProfile || null,
+        journalEntries: [],
+        transportMode,
+        expenseMode,
       });
 
       tripId = savedTrip._id;
@@ -246,6 +263,8 @@ exports.optimizeItinerary = async (req, res) => {
         rawPois.length > 0 ? Array.from(new Set(rawPois.map((poi) => poi.source || "unknown"))).join(", ") : "none",
       itinerary,
       weatherContext,
+      transportMode,
+      expenseMode,
       rawPoiCount: rawPois.length,
       prerankedPoiCount: prerankedPois.length,
       selectedPoiCount: itinerary.mapPoints?.length || 0,
@@ -319,11 +338,68 @@ exports.getTripHistoryItem = async (req, res) => {
         freeSlots: trip.freeSlots || [],
         rawPois: trip.rawPois || [],
         itinerary: trip.itinerary || null,
+        journalEntries: (trip.journalEntries || []).map((entry, index) => ({
+          id: String(entry._id || `${trip._id}-journal-${index + 1}`),
+          content: entry.content || "",
+          createdAt: entry.createdAt || trip.updatedAt || trip.createdAt,
+        })),
+        transportMode: trip.transportMode || trip.itinerary?.transportMode || "auto",
+        expenseMode: trip.expenseMode || trip.itinerary?.expenseMode || "balanced",
       },
     });
   } catch (error) {
     return res.status(500).json({
       error: error.message || "Failed to load trip.",
+    });
+  }
+};
+
+exports.updateTripJournal = async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        error: "MongoDB is not connected.",
+      });
+    }
+
+    const query = req.dbUser?._id
+      ? {
+          _id: req.params.tripId,
+          $or: [{ user: req.dbUser._id }, { "userSnapshot.clerkId": req.auth.userId }],
+        }
+      : { _id: req.params.tripId, "userSnapshot.clerkId": req.auth.userId };
+
+    const trip = await Trip.findOne(query);
+
+    if (!trip) {
+      return res.status(404).json({
+        error: "Trip not found.",
+      });
+    }
+
+    const entries = Array.isArray(req.body.journalEntries)
+      ? req.body.journalEntries
+          .map((entry) => ({
+            content: String(entry.content || "").trim(),
+            createdAt: entry.createdAt ? new Date(entry.createdAt) : new Date(),
+          }))
+          .filter((entry) => entry.content)
+          .slice(-50)
+      : [];
+
+    trip.journalEntries = entries;
+    await trip.save();
+
+    return res.json({
+      journalEntries: trip.journalEntries.map((entry, index) => ({
+        id: String(entry._id || `${trip._id}-journal-${index + 1}`),
+        content: entry.content || "",
+        createdAt: entry.createdAt || trip.updatedAt || trip.createdAt,
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: error.message || "Failed to update trip journal.",
     });
   }
 };
